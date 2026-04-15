@@ -1,0 +1,20 @@
+{
+  "name": "@pipeworx/mcp-samgov",
+  "version": "0.1.0",
+  "description": "SAM.gov MCP — Federal contract opportunities and entity registration data",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "pipeworx", "samgov"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pipeworx-io/mcp-samgov"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
