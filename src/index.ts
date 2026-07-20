@@ -11,6 +11,9 @@ interface McpToolDefinition {
 interface McpToolExport {
   tools: McpToolDefinition[];
   callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  meter?: { credits: number };
+  cost?: Record<string, unknown>;
+  provider?: string;
 }
 
 /**
@@ -29,6 +32,7 @@ interface McpToolExport {
 
 const OPPS_BASE = 'https://api.sam.gov/opportunities/v2/search';
 const ENTITY_BASE = 'https://api.sam.gov/entity-information/v3/entities';
+const EXCLUSIONS_BASE = 'https://api.sam.gov/entity-information/v4/exclusions';
 
 function extractKey(args: Record<string, unknown>): string {
   const key = args._apiKey as string;
@@ -54,18 +58,21 @@ const tools: McpToolExport['tools'] = [
   {
     name: 'sam_search_opportunities',
     description:
-      'Search active federal contract opportunities on SAM.gov. Filter by keyword, NAICS code, set-aside type, posting date range, and procurement type.',
+      'Search active federal contract opportunities by keyword, NAICS code (e.g., "541512"), set-aside type, posting date range, and procurement type. Returns titles, solicitation numbers, deadlines, and agencies. SAM.gov requires a posting date range — if you omit posted_from/posted_to, we default to the last 30 days. Accepts query / q / keywords as aliases for keyword.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        keyword: { type: 'string', description: 'Search term for opportunity title or description' },
+        keyword: { type: 'string', description: 'Search term for opportunity title or description. query, q, keywords accepted as aliases.' },
+        query: { type: 'string', description: 'Alias for keyword.' },
+        q: { type: 'string', description: 'Alias for keyword.' },
+        keywords: { type: 'string', description: 'Alias for keyword.' },
         naics: { type: 'string', description: 'NAICS code to filter by (e.g., "541512" for computer systems design)' },
         set_aside: {
           type: 'string',
           description: 'Small business set-aside type: SBA (Small Business), SDVOSB (Service-Disabled Veteran), HUBZone, 8AN (8(a)), WOSB (Women-Owned), EDWOSB (Economically Disadvantaged Women-Owned)',
         },
-        posted_from: { type: 'string', description: 'Start of posting date range in MM/dd/yyyy format' },
-        posted_to: { type: 'string', description: 'End of posting date range in MM/dd/yyyy format' },
+        posted_from: { type: 'string', description: 'Start of posting date range in MM/dd/yyyy format. Defaults to 30 days ago if omitted.' },
+        posted_to: { type: 'string', description: 'End of posting date range in MM/dd/yyyy format. Defaults to today if omitted.' },
         limit: { type: 'number', description: 'Number of results to return (1-100, default 10)' },
         offset: { type: 'number', description: 'Result offset for pagination (default 0)' },
         ptype: {
@@ -80,7 +87,7 @@ const tools: McpToolExport['tools'] = [
   {
     name: 'sam_get_opportunity',
     description:
-      'Get full details for a specific federal contract opportunity by its solicitation number. Returns point of contact, attachments, classification, and full description.',
+      'Get full details for a federal contract opportunity by solicitation number. Returns description, contact info, deadlines, attachments, NAICS codes, and set-aside status.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -93,7 +100,7 @@ const tools: McpToolExport['tools'] = [
   {
     name: 'sam_entity_search',
     description:
-      'Search for registered entities (vendors/contractors) in the SAM.gov entity database. Returns UEI, CAGE code, business name, address, NAICS codes, small business status, and certifications.',
+      'Search registered federal contractors by business name or UEI. Returns UEI, CAGE code, address, NAICS codes, small business status, and certifications.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -109,7 +116,7 @@ const tools: McpToolExport['tools'] = [
   {
     name: 'sam_set_aside_opportunities',
     description:
-      'Search federal contract opportunities filtered by small business set-aside type. Useful for finding opportunities reserved for specific small business categories.',
+      'Find federal contracts reserved for small businesses (women-owned, HUBZone, service-disabled veteran-owned, etc.). Returns titles, deadlines, and agencies.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -123,6 +130,22 @@ const tools: McpToolExport['tools'] = [
         _apiKey: { type: 'string', description: 'SAM.gov API key' },
       },
       required: ['set_aside', '_apiKey'],
+    },
+  },
+  {
+    name: 'sam_search_exclusions',
+    description:
+      'Search the SAM.gov Exclusions list — parties DEBARRED, suspended, or otherwise excluded from receiving federal contracts, grants, or assistance. Answers "is this company/person barred from federal contracting" for KYB / vendor-vetting / procurement due diligence. Filter by name, US state, and classification (Firm / Individual / Vessel / Special Entity). Returns each excluded party with the exclusion type, program, excluding agency, and active/termination dates. Distinct from OFAC sanctions (see sanctions_screen) — this is the federal procurement debarment list.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'Name to search (company or individual), e.g. "Smith Construction". Matched against the exclusion name.' },
+        state: { type: 'string', description: 'Optional 2-letter US state to filter by, e.g. "VA".' },
+        classification: { type: 'string', description: 'Optional classification: "Firm", "Individual", "Vessel", or "Special Entity Designation".' },
+        limit: { type: 'number', description: 'Number of results (1-100, default 10).' },
+        _apiKey: { type: 'string', description: 'SAM.gov API key' },
+      },
+      required: ['name', '_apiKey'],
     },
   },
 ];
@@ -141,6 +164,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       return entitySearch(key, args);
     case 'sam_set_aside_opportunities':
       return setAsideOpportunities(key, args);
+    case 'sam_search_exclusions':
+      return searchExclusions(key, args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -240,14 +265,35 @@ function formatOpportunity(opp: SamOpportunity) {
   };
 }
 
+// SAM.gov uses MM/dd/yyyy. Format a Date in that shape.
+function samDate(d: Date): string {
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${m}/${day}/${d.getUTCFullYear()}`;
+}
+
 async function searchOpportunities(key: string, args: Record<string, unknown>) {
   const params = new URLSearchParams({ api_key: key });
-  if (args.keyword) params.set('keyword', args.keyword as string);
+
+  // Accept query / q / keywords as natural aliases. Agents reach for "query"
+  // by default on any search-shaped tool.
+  const keyword = (args.keyword ?? args.query ?? args.q ?? args.keywords) as string | undefined;
+  if (keyword) params.set('keyword', keyword);
+
   if (args.naics) params.set('ncode', args.naics as string);
   if (args.set_aside) params.set('typeOfSetAside', args.set_aside as string);
-  if (args.posted_from) params.set('postedFrom', args.posted_from as string);
-  if (args.posted_to) params.set('postedTo', args.posted_to as string);
   if (args.ptype) params.set('ptype', args.ptype as string);
+
+  // SAM.gov requires postedFrom + postedTo on every search — missing those is
+  // why the endpoint was returning bare 404 (no error body) when agents called
+  // it without dates. Default to a 30-day rolling window so the common case
+  // "what's posted lately" Just Works.
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+  const postedFrom = (args.posted_from as string | undefined) ?? samDate(thirtyDaysAgo);
+  const postedTo = (args.posted_to as string | undefined) ?? samDate(now);
+  params.set('postedFrom', postedFrom);
+  params.set('postedTo', postedTo);
 
   const limit = Math.min(100, Math.max(1, (args.limit as number) ?? 10));
   params.set('limit', String(limit));
@@ -259,6 +305,8 @@ async function searchOpportunities(key: string, args: Record<string, unknown>) {
 
   return {
     total_records: data.totalRecords ?? 0,
+    posted_from: postedFrom,
+    posted_to: postedTo,
     limit,
     offset,
     opportunities: opps.map(formatOpportunity),
@@ -361,6 +409,66 @@ async function setAsideOpportunities(key: string, args: Record<string, unknown>)
     total_records: data.totalRecords ?? 0,
     limit,
     opportunities: opps.map(formatOpportunity),
+  };
+}
+
+// ── Exclusions (federal debarment) ──────────────────────────────────────
+
+// SAM v4 exclusions nest fields under sub-objects (verified live 2026-07-20).
+type SamExclusion = {
+  exclusionDetails?: { classificationType?: string; exclusionType?: string; exclusionProgram?: string; excludingAgencyName?: string; excludingAgencyCode?: string };
+  exclusionIdentification?: { ueiSAM?: string; entityName?: string; firstName?: string; middleName?: string; lastName?: string; suffix?: string };
+  exclusionActions?: { listOfActions?: Array<{ activateDate?: string; terminationDate?: string; createDate?: string }> };
+  exclusionPrimaryAddress?: { city?: string; stateOrProvinceCode?: string; countryCode?: string };
+  exclusionOtherInformation?: { additionalComments?: string };
+};
+
+function formatExclusion(e: SamExclusion) {
+  const id = e.exclusionIdentification ?? {};
+  const det = e.exclusionDetails ?? {};
+  const action = e.exclusionActions?.listOfActions?.[0] ?? {};
+  const addr = e.exclusionPrimaryAddress ?? {};
+  const personName = [id.firstName, id.middleName, id.lastName, id.suffix].filter(Boolean).join(' ').trim();
+  return {
+    name: id.entityName || personName || null,
+    classification: det.classificationType ?? null,
+    exclusion_type: det.exclusionType ?? null,
+    exclusion_program: det.exclusionProgram ?? null,
+    excluding_agency: det.excludingAgencyName ?? null,
+    active_date: action.activateDate ?? null,
+    termination_date: action.terminationDate || 'Indefinite',
+    uei: id.ueiSAM ?? null,
+    location: [addr.city, addr.stateOrProvinceCode, addr.countryCode].filter(Boolean).join(', ') || null,
+    additional_comments: e.exclusionOtherInformation?.additionalComments ?? null,
+  };
+}
+
+async function searchExclusions(key: string, args: Record<string, unknown>) {
+  const name = String(args.name ?? '').trim();
+  if (!name) throw new Error('sam_search_exclusions requires a `name` to search.');
+  const limit = Math.min(100, Math.max(1, (args.limit as number) ?? 10));
+  const params = new URLSearchParams({ api_key: key, exclusionName: name, page: '0', size: String(limit) });
+  if (args.state) params.set('stateProvince', String(args.state).toUpperCase());
+  if (args.classification) params.set('classification', String(args.classification));
+
+  const data = (await samFetch(`${EXCLUSIONS_BASE}?${params}`)) as {
+    totalRecords?: number;
+    excludedEntity?: SamExclusion[];
+    excludedEntitiesList?: SamExclusion[];
+    _embedded?: { exclusionDetails?: SamExclusion[] };
+  };
+  // The v4 exclusions payload wraps the list under one of a few keys depending
+  // on version — accept them all.
+  const list = data.excludedEntity ?? data.excludedEntitiesList ?? data._embedded?.exclusionDetails ?? [];
+  return {
+    query: name,
+    total_records: data.totalRecords ?? list.length,
+    matched: list.length > 0,
+    note: list.length === 0
+      ? 'No federal exclusions found matching that name. This is the SAM.gov debarment list; for OFAC/export sanctions use sanctions_screen.'
+      : 'Excluded parties are barred from federal contracts/grants — verify identity (name match ≠ confirmed party).',
+    limit,
+    exclusions: list.map(formatExclusion),
   };
 }
 
