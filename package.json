@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-samgov",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SAM.gov MCP — Federal contract opportunities and entity registration data",
   "type": "module",
   "main": "src/index.ts",
