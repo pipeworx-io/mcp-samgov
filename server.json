@@ -3,7 +3,7 @@
   "name": "io.github.pipeworx-io/samgov",
   "title": "Samgov",
   "description": "SAM.gov MCP — Federal contract opportunities and entity registration data",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "websiteUrl": "https://pipeworx.io/packs/samgov",
   "repository": {
     "url": "https://github.com/pipeworx-io/mcp-samgov",
