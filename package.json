@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-samgov",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "SAM.gov MCP — Federal contract opportunities and entity registration data",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-840de8afdd68b61945df72a39f947f3a25e332942215ad8ecf6b0bf7afc86457",
-    "sourceCommit": "6fe8fb3e01138dfc4ebe7d5c246503aab9278d06"
+    "sourceHash": "v1-5b95ea0e2f62163a46209ef161c511135bbd7619bb3c6524d1bf9740314d022c",
+    "sourceCommit": "211a6d307878cf994dd13cc72b7c2921b47759a7"
   }
 }

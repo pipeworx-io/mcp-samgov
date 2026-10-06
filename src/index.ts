@@ -923,7 +923,12 @@ const tools: McpToolExport['tools'] = [
         },
         _apiKey: { type: 'string', description: 'Optional — omit it. This search answers keyless from the local snapshot of SAM.gov\'s public Contract Opportunities extract; a key is needed only to reach postings newer than that snapshot.' },
       },
-      required: ['keyword'],
+      // No `required` on purpose (2026-10-06): the handler accepts query / q /
+      // keywords as aliases for keyword and has a no-keyword browse mode, but
+      // `required: ['keyword']` made the gateway refuse {keywords: …}, {naics: …}
+      // and {} with invalid_arguments before any of that code ran — 7 of 7
+      // such calls in a live probe, 8 user_error rows in 48h.
+      required: [],
     },
   },
   {
